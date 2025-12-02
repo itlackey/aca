@@ -1,0 +1,47 @@
+# Deploy container app configuration
+#
+# Triggers on containerapp.yml changes. Creates or updates the app from YAML.
+# Copy to your app repo and configure the variables.
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include: [containerapp.yml]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  azureSubscription: 'your-service-connection'  # Configure this
+  resourceGroup: 'your-resource-group'          # Configure this
+  appName: 'web-hello'                          # Configure this
+
+steps:
+  - task: AzureCLI@2
+    displayName: Deploy container app
+    inputs:
+      azureSubscription: $(azureSubscription)
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+
+        # Check if app exists
+        if az containerapp show -n $(appName) -g $(resourceGroup) &>/dev/null; then
+          echo "Updating existing app..."
+          az containerapp update \
+            --name $(appName) \
+            --resource-group $(resourceGroup) \
+            --yaml containerapp.yml
+        else
+          echo "Creating new app..."
+          az containerapp create \
+            --resource-group $(resourceGroup) \
+            --yaml containerapp.yml
+        fi
+
+        # Show result
+        az containerapp show -n $(appName) -g $(resourceGroup) \
+          --query "{name:name, fqdn:properties.configuration.ingress.fqdn, revision:properties.latestRevisionName}" \
+          -o table

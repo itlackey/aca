@@ -1,25 +1,33 @@
 #!/usr/bin/env bash
 
-# Helper script to delete the entire resource group created by the
-# platform infrastructure.  Use this script during training or when
-# cleaning up a demo environment.  It prompts for confirmation before
-# deleting the group and all contained resources.
+##
+# destroy-resources.sh [env-file]
+#
+# Deletes the resource group and all resources.
+#
+# Usage:
+#   ./destroy-resources.sh              # Uses .env in script directory
+#   ./destroy-resources.sh .env.dev     # Uses specified env file
 
 set -euo pipefail
 
-ENV_FILE=${ENV_FILE:-"$(dirname "$0")/.env"}
-if [[ -f "$ENV_FILE" ]]; then
-  # shellcheck disable=SC1090
-  set -o allexport
-  source "$ENV_FILE"
-  set +o allexport
-else
-  echo "Environment file '$ENV_FILE' not found. Copy .env.example to .env and update the values before running." >&2
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Load environment file (argument or default to .env)
+ENV_FILE="${1:-$SCRIPT_DIR/.env}"
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "Error: Environment file '$ENV_FILE' not found."
+  echo "Usage: ./destroy-resources.sh [env-file]"
   exit 1
 fi
 
+set -o allexport
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +o allexport
+
 if [[ -z "${RESOURCE_GROUP:-}" ]]; then
-  echo "RESOURCE_GROUP is not set in $ENV_FILE" >&2
+  echo "Error: RESOURCE_GROUP is not set in $ENV_FILE" >&2
   exit 1
 fi
 
@@ -27,17 +35,17 @@ if [[ -n "${SUBSCRIPTION_ID:-}" ]]; then
   az account set --subscription "$SUBSCRIPTION_ID"
 fi
 
-read -r -p "This will delete resource group '$RESOURCE_GROUP' and ALL resources in it. Are you sure? (y/N) " answer
+echo "Environment: $ENV_FILE"
+echo "Resource group: $RESOURCE_GROUP"
+read -r -p "Delete '$RESOURCE_GROUP' and ALL resources? (y/N) " answer
+
 case "$answer" in
-  [yY][eE][sS]|[yY])
-    echo "Deleting resource group '$RESOURCE_GROUP'..."
-    az group delete \
-      --name "$RESOURCE_GROUP" \
-      --yes \
-      --no-wait
-    echo "Delete request submitted.  Use 'az group show --name $RESOURCE_GROUP' to check status."
+  [yY]*)
+    echo "Deleting..."
+    az group delete --name "$RESOURCE_GROUP" --yes --no-wait
+    echo "Delete submitted. Check status: az group show -n $RESOURCE_GROUP"
     ;;
   *)
-    echo "Aborted.  No resources were deleted."
+    echo "Aborted."
     ;;
 esac

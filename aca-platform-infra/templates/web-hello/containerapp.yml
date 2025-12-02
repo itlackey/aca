@@ -1,0 +1,56 @@
+# Azure Container Apps configuration for web-hello
+#
+# This file is owned by the app repository, not the infra repo.
+# Fill in the values below once when setting up your app, then commit.
+#
+# Deploy: az containerapp create -g <rg> --yaml containerapp.yml
+# Update: az containerapp update -n web-hello -g <rg> --yaml containerapp.yml
+
+type: Microsoft.App/containerApps
+name: web-hello
+location: eastus  # Change to your region
+identity:
+  type: UserAssigned
+  userAssignedIdentities:
+    # Get this from: az identity show -n <identity-name> -g <rg> --query id -o tsv
+    /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identity-name>: {}
+properties:
+  managedEnvironmentId: /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.App/managedEnvironments/<env-name>
+  configuration:
+    activeRevisionsMode: Single
+    registries:
+      - server: <acr-name>.azurecr.io
+        identity: /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identity-name>
+    ingress:
+      external: true
+      targetPort: 3000
+      transport: auto
+      allowInsecure: false
+    # Secrets from Key Vault (uncomment to use)
+    # secrets:
+    #   - name: db-password
+    #     keyVaultUrl: https://<keyvault-name>.vault.azure.net/secrets/db-password
+    #     identity: /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identity-name>
+  template:
+    containers:
+      - name: web-hello
+        image: <acr-name>.azurecr.io/web-hello:latest
+        resources:
+          cpu: 0.25
+          memory: 0.5Gi
+        env:
+          - name: PORT
+            value: "3000"
+          - name: NODE_ENV
+            value: production
+          # Reference a secret (uncomment to use)
+          # - name: DB_PASSWORD
+          #   secretRef: db-password
+    scale:
+      minReplicas: 1
+      maxReplicas: 5
+      rules:
+        - name: http-scaling
+          http:
+            metadata:
+              concurrentRequests: "50"

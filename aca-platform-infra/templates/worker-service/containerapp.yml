@@ -1,0 +1,52 @@
+# Azure Container Apps configuration for worker-service
+#
+# Background worker with NO ingress (not exposed to HTTP traffic).
+# This file is owned by the app repository. Fill in values and commit.
+#
+# Deploy: az containerapp create -g <rg> --yaml containerapp.yml
+# Update: az containerapp update -n worker-service -g <rg> --yaml containerapp.yml
+
+type: Microsoft.App/containerApps
+name: worker-service
+location: eastus  # Change to your region
+identity:
+  type: UserAssigned
+  userAssignedIdentities:
+    # Get this from: az identity show -n <identity-name> -g <rg> --query id -o tsv
+    /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identity-name>: {}
+properties:
+  managedEnvironmentId: /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.App/managedEnvironments/<env-name>
+  configuration:
+    activeRevisionsMode: Single
+    registries:
+      - server: <acr-name>.azurecr.io
+        identity: /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identity-name>
+    # No ingress - this is a background worker
+    # Secrets from Key Vault (uncomment to use)
+    # secrets:
+    #   - name: db-connection-string
+    #     keyVaultUrl: https://<keyvault-name>.vault.azure.net/secrets/db-connection-string
+    #     identity: /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identity-name>
+  template:
+    containers:
+      - name: worker-service
+        image: <acr-name>.azurecr.io/worker-service:latest
+        resources:
+          cpu: 0.5
+          memory: 1Gi
+        env:
+          - name: PYTHONUNBUFFERED
+            value: "1"
+          # Reference a secret (uncomment to use)
+          # - name: DATABASE_URL
+          #   secretRef: db-connection-string
+    scale:
+      minReplicas: 1
+      maxReplicas: 10
+      rules:
+        - name: cpu-scaling
+          custom:
+            type: cpu
+            metadata:
+              type: Utilization
+              value: "70"

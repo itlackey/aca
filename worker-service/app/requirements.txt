@@ -1,3 +1,0 @@
-# This example worker has no external dependencies.  You can add packages
-# here, e.g. azure-servicebus, azure-storage-queue, or requests, if your
-# worker needs to process messages from Azure services.

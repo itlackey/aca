@@ -1,65 +1,37 @@
 #!/usr/bin/env bash
 
 ##
-# create-resources.sh
+# create-resources.sh [env-file]
 #
-# This script provisions the shared infrastructure required for a "dual‑homed"
-# Azure Container Apps deployment.  It builds on the original CLI example by
-# adding support for **private endpoints** and **private DNS** so that
-# storage access occurs only over a private network.  The high‑level tasks
-# performed by this script are:
+# Provisions shared infrastructure for Azure Container Apps.
 #
-# 1. Create a resource group (if it doesn’t already exist).
-# 2. Create or reuse a virtual network with two subnets:
-#    • An infrastructure subnet (delegated to `Microsoft.App/environments`) for
-#      the Container Apps environment.  The subnet must be at least a /23
-#      address space as recommended【569073402552708†L589-L599】.
-#    • A private‑endpoint subnet used to host Private Endpoints for Azure
-#      services such as storage.  This subnet should be a small CIDR block
-#      (for example /27) and must **not** be delegated.
-# 3. Create an Azure Storage account and file share to hold diagnostics and
-#    configuration files.  The storage account’s public network access is
-#    disabled so that only private endpoints can reach it.
-# 4. Create a Private DNS zone (`privatelink.file.core.windows.net`) and link
-#    it to the virtual network.  This zone allows clients in the VNet to
-#    resolve the storage account’s file service name to the private endpoint
-#    address.  Microsoft lists this zone as the designated domain for the
-#    Azure Files service【23463733748053†L545-L550】.
-# 5. Create a Private Endpoint in the private‑endpoint subnet targeting the
-#    storage account’s `file` service, and associate the DNS zone with the
-#    endpoint.  After this step, DNS resolution and network access to the
-#    storage account’s file service remain entirely on the private network.
-# 6. Create a Container Apps environment integrated with the infrastructure
-#    subnet.  The environment uses Azure Monitor for logging (no Log
-#    Analytics workspace is required) and can be configured as internal only
-#    via an environment variable.  The environment’s storage account is
-#    passed so that logs are written to the same storage account.
-# 7. Provision a Key Vault, Azure Container Registry and optional
-#    user‑assigned managed identity.  These resources are identical to those
-#    created by the original script and are included for completeness.
+# Usage:
+#   ./create-resources.sh              # Uses .env in script directory
+#   ./create-resources.sh .env.dev     # Uses specified env file
+#   ./create-resources.sh .env.prod
 #
-# This script is idempotent: running it multiple times will not recreate
-# existing resources.  You can safely rerun the script to apply changes.
+# This script is idempotent - safe to re-run.
 
 set -euo pipefail
 
-# Load environment variables from the file specified by ENV_FILE or default
-# to `.env` in the script directory.  Use `cp .env.example .env` to get
-# started.  Variables defined in the .env file override defaults below.
-ENV_FILE=${ENV_FILE:-"$(dirname "$0")/.env"}
-if [[ -f "$ENV_FILE" ]]; then
-  # shellcheck disable=SC1090
-  set -o allexport
-  source "$ENV_FILE"
-  set +o allexport
-else
-  echo "Environment file '$ENV_FILE' not found. Copy .env.example to .env and update the values before running." >&2
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Load environment file (argument or default to .env)
+ENV_FILE="${1:-$SCRIPT_DIR/.env}"
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "Error: Environment file '$ENV_FILE' not found."
+  echo "Usage: ./create-resources.sh [env-file]"
+  echo "Example: ./create-resources.sh .env.dev"
   exit 1
 fi
 
-# Verify that required variables are set.  Extend this list as the
-# infrastructure evolves.  For optional variables see the comments in
-# `.env.example`.
+echo "Loading configuration from: $ENV_FILE"
+set -o allexport
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +o allexport
+
+# Verify that required variables are set.
 required_vars=(
   RESOURCE_GROUP
   LOCATION
@@ -85,16 +57,13 @@ if [[ "$missing" == true ]]; then
   exit 1
 fi
 
-# Optionally set the Azure subscription.  If SUBSCRIPTION_ID is not set
-# the current default subscription configured via `az account` is used.
+# Optionally set the Azure subscription.
 if [[ -n "${SUBSCRIPTION_ID:-}" ]]; then
   echo "Using subscription $SUBSCRIPTION_ID"
   az account set --subscription "$SUBSCRIPTION_ID"
 fi
 
-# Build a reusable array of tag arguments.  Tags are critical in
-# production for cost allocation and governance.  They are passed to
-# resource creation commands when any tag variables are provided.
+# Build a reusable array of tag arguments.
 TAGS_ARGS=()
 if [[ -n "${TAG_ENVIRONMENT:-}" || -n "${TAG_OWNER:-}" || -n "${TAG_COST_CENTER:-}" ]]; then
   TAGS_ARGS=(--tags)
@@ -103,14 +72,16 @@ if [[ -n "${TAG_ENVIRONMENT:-}" || -n "${TAG_OWNER:-}" || -n "${TAG_COST_CENTER:
   [[ -n "${TAG_COST_CENTER:-}" ]] && TAGS_ARGS+=("cost-center=$TAG_COST_CENTER")
 fi
 
-echo "\n==> Creating resource group '$RESOURCE_GROUP' in '$LOCATION'"
+echo ""
+echo "==> Creating resource group '$RESOURCE_GROUP' in '$LOCATION'"
 az group create \
   --name "$RESOURCE_GROUP" \
   --location "$LOCATION" \
   "${TAGS_ARGS[@]}" \
   --output none
 
-echo "\n==> Creating virtual network '$VNET_NAME'"
+echo ""
+echo "==> Creating virtual network '$VNET_NAME'"
 if ! az network vnet show --resource-group "$RESOURCE_GROUP" --name "$VNET_NAME" --only-show-errors >/dev/null 2>&1; then
   az network vnet create \
     --resource-group "$RESOURCE_GROUP" \
@@ -124,7 +95,8 @@ else
 fi
 
 # Create the infrastructure subnet (delegated) if it does not exist
-echo "\n==> Creating delegated subnet '$INFRA_SUBNET_NAME'"
+echo ""
+echo "==> Creating delegated subnet '$INFRA_SUBNET_NAME'"
 if ! az network vnet subnet show --resource-group "$RESOURCE_GROUP" --vnet-name "$VNET_NAME" --name "$INFRA_SUBNET_NAME" --only-show-errors >/dev/null 2>&1; then
   az network vnet subnet create \
     --resource-group "$RESOURCE_GROUP" \
@@ -154,7 +126,8 @@ if [[ "$delegations" != *"Microsoft.App/environments"* ]]; then
 fi
 
 # Create the private-endpoint subnet if it does not exist
-echo "\n==> Creating private endpoint subnet '$PE_SUBNET_NAME'"
+echo ""
+echo "==> Creating private endpoint subnet '$PE_SUBNET_NAME'"
 if ! az network vnet subnet show --resource-group "$RESOURCE_GROUP" --vnet-name "$VNET_NAME" --name "$PE_SUBNET_NAME" --only-show-errors >/dev/null 2>&1; then
   az network vnet subnet create \
     --resource-group "$RESOURCE_GROUP" \
@@ -171,9 +144,10 @@ INFRA_SUBNET_ID=$(az network vnet subnet show --resource-group "$RESOURCE_GROUP"
 PE_SUBNET_ID=$(az network vnet subnet show --resource-group "$RESOURCE_GROUP" --vnet-name "$VNET_NAME" --name "$PE_SUBNET_NAME" --query id -o tsv)
 
 # ----------------------------------------------------------------------------
-# Storage account and file share
+# Storage account
 
-echo "\n==> Creating storage account '$STORAGE_ACCOUNT_NAME'"
+echo ""
+echo "==> Creating storage account '$STORAGE_ACCOUNT_NAME'"
 if ! az storage account show --resource-group "$RESOURCE_GROUP" --name "$STORAGE_ACCOUNT_NAME" --only-show-errors >/dev/null 2>&1; then
   az storage account create \
     --name "$STORAGE_ACCOUNT_NAME" \
@@ -193,9 +167,9 @@ fi
 # Retrieve storage account resource ID
 STORAGE_ACCOUNT_ID=$(az storage account show --resource-group "$RESOURCE_GROUP" --name "$STORAGE_ACCOUNT_NAME" --query id -o tsv)
 
-# Disable public network access on the storage account so that only private
-# endpoints can access it
-echo "\n==> Disabling public network access for storage account '$STORAGE_ACCOUNT_NAME'"
+# Disable public network access on the storage account
+echo ""
+echo "==> Disabling public network access for storage account '$STORAGE_ACCOUNT_NAME'"
 az storage account update \
   --resource-group "$RESOURCE_GROUP" \
   --name "$STORAGE_ACCOUNT_NAME" \
@@ -203,15 +177,12 @@ az storage account update \
   --output none
 
 # Optionally configure lifecycle management to control costs.
-# Set LIFECYCLE_ENABLE=true to enable. Configure policies via env vars:
-#   LIFECYCLE_MOVE_TO_COOL_AFTER_DAYS (default 30)
-#   LIFECYCLE_DELETE_AFTER_DAYS (default 180)
 if [[ "${LIFECYCLE_ENABLE:-false}" == "true" ]]; then
   MOVE_TO_COOL=${LIFECYCLE_MOVE_TO_COOL_AFTER_DAYS:-30}
   DELETE_AFTER=${LIFECYCLE_DELETE_AFTER_DAYS:-180}
-  echo "\n==> Applying storage lifecycle policy (Cool after ${MOVE_TO_COOL} days, delete after ${DELETE_AFTER} days)"
-  # Build a basic lifecycle management policy for blobs in the 'insights-logs' and 'insights-metrics' containers
-  read -r -d '' POLICY_JSON <<EOF
+  echo ""
+  echo "==> Applying storage lifecycle policy (Cool after ${MOVE_TO_COOL} days, delete after ${DELETE_AFTER} days)"
+  read -r -d '' POLICY_JSON <<EOF || true
 {
   "rules": [
     {
@@ -247,18 +218,6 @@ EOF
     --only-show-errors
 fi
 
-# Create a file share for configuration if FILE_SHARE_NAME is provided
-if [[ -n "${FILE_SHARE_NAME:-}" ]]; then
-  echo "\n==> Creating Azure Files share '$FILE_SHARE_NAME'"
-  SA_KEY=$(az storage account keys list --resource-group "$RESOURCE_GROUP" --account-name "$STORAGE_ACCOUNT_NAME" --query '[0].value' -o tsv)
-  if ! az storage share exists --account-name "$STORAGE_ACCOUNT_NAME" --account-key "$SA_KEY" --name "$FILE_SHARE_NAME" --query exists -o tsv | grep -q true; then
-    az storage share create --account-name "$STORAGE_ACCOUNT_NAME" --account-key "$SA_KEY" --name "$FILE_SHARE_NAME" --output none
-    echo "Created file share '$FILE_SHARE_NAME'."
-  else
-    echo "File share '$FILE_SHARE_NAME' already exists."
-  fi
-fi
-
 # ----------------------------------------------------------------------------
 # Private DNS zone and Private Endpoint
 
@@ -268,7 +227,8 @@ PE_CONNECTION_NAME="${STORAGE_ACCOUNT_NAME}-file-conn"
 DNS_ZONE_LINK_NAME="${VNET_NAME}-file-link"
 DNS_ZONE_GROUP_NAME="${STORAGE_ACCOUNT_NAME}-file-zone-group"
 
-echo "\n==> Creating Private DNS zone '$DNS_ZONE_NAME'"
+echo ""
+echo "==> Creating Private DNS zone '$DNS_ZONE_NAME'"
 if ! az network private-dns zone show --resource-group "$RESOURCE_GROUP" --name "$DNS_ZONE_NAME" --only-show-errors >/dev/null 2>&1; then
   az network private-dns zone create \
     --resource-group "$RESOURCE_GROUP" \
@@ -279,7 +239,8 @@ else
   echo "Private DNS zone '$DNS_ZONE_NAME' already exists."
 fi
 
-echo "\n==> Linking DNS zone '$DNS_ZONE_NAME' to virtual network '$VNET_NAME'"
+echo ""
+echo "==> Linking DNS zone '$DNS_ZONE_NAME' to virtual network '$VNET_NAME'"
 if ! az network private-dns link vnet show --resource-group "$RESOURCE_GROUP" --zone-name "$DNS_ZONE_NAME" --name "$DNS_ZONE_LINK_NAME" --only-show-errors >/dev/null 2>&1; then
   az network private-dns link vnet create \
     --resource-group "$RESOURCE_GROUP" \
@@ -293,7 +254,8 @@ else
   echo "DNS zone '$DNS_ZONE_NAME' is already linked to VNet '$VNET_NAME'."
 fi
 
-echo "\n==> Creating private endpoint '$PE_NAME' for storage account '$STORAGE_ACCOUNT_NAME'"
+echo ""
+echo "==> Creating private endpoint '$PE_NAME' for storage account '$STORAGE_ACCOUNT_NAME'"
 if ! az network private-endpoint show --resource-group "$RESOURCE_GROUP" --name "$PE_NAME" --only-show-errors >/dev/null 2>&1; then
   az network private-endpoint create \
     --name "$PE_NAME" \
@@ -309,7 +271,8 @@ else
   echo "Private endpoint '$PE_NAME' already exists."
 fi
 
-echo "\n==> Creating DNS zone group '$DNS_ZONE_GROUP_NAME' for private endpoint"
+echo ""
+echo "==> Creating DNS zone group '$DNS_ZONE_GROUP_NAME' for private endpoint"
 if ! az network private-endpoint dns-zone-group show --resource-group "$RESOURCE_GROUP" --endpoint-name "$PE_NAME" --name "$DNS_ZONE_GROUP_NAME" --only-show-errors >/dev/null 2>&1; then
   az network private-endpoint dns-zone-group create \
     --resource-group "$RESOURCE_GROUP" \
@@ -326,9 +289,8 @@ fi
 # ----------------------------------------------------------------------------
 # Container Apps environment
 
-echo "\n==> Creating Container Apps environment '$ACA_ENVIRONMENT'"
-# Build the argument list for environment creation.  We always specify the
-# infrastructure subnet and the storage account for Azure Monitor diagnostics.
+echo ""
+echo "==> Creating Container Apps environment '$ACA_ENVIRONMENT'"
 env_args=(
   --name "$ACA_ENVIRONMENT"
   --resource-group "$RESOURCE_GROUP"
@@ -354,7 +316,8 @@ fi
 # ----------------------------------------------------------------------------
 # Key Vault
 
-echo "\n==> Creating Key Vault '$KEYVAULT_NAME'"
+echo ""
+echo "==> Creating Key Vault '$KEYVAULT_NAME'"
 if ! az keyvault show --name "$KEYVAULT_NAME" --resource-group "$RESOURCE_GROUP" --only-show-errors >/dev/null 2>&1; then
   az keyvault create \
     --name "$KEYVAULT_NAME" \
@@ -371,7 +334,8 @@ fi
 # ----------------------------------------------------------------------------
 # Azure Container Registry
 
-echo "\n==> Ensuring Azure Container Registry '$ACR_NAME' exists"
+echo ""
+echo "==> Ensuring Azure Container Registry '$ACR_NAME' exists"
 ACR_SKU=${ACR_SKU:-Standard}
 if ! az acr show --name "$ACR_NAME" --resource-group "$RESOURCE_GROUP" --only-show-errors >/dev/null 2>&1; then
   az acr create \
@@ -395,7 +359,8 @@ ACR_LOGIN_SERVER=$(az acr show --name "$ACR_NAME" --resource-group "$RESOURCE_GR
 
 if [[ "${CREATE_MANAGED_IDENTITY:-false}" == "true" ]]; then
   IDENTITY_NAME=${USER_ASSIGNED_IDENTITY_NAME:-"aca-uami"}
-  echo "\n==> Creating user-assigned managed identity '$IDENTITY_NAME'"
+  echo ""
+  echo "==> Creating user-assigned managed identity '$IDENTITY_NAME'"
   IDENTITY_RESOURCE_ID=$(az identity create \
     --name "$IDENTITY_NAME" \
     --resource-group "$RESOURCE_GROUP" \
@@ -410,7 +375,8 @@ if [[ "${CREATE_MANAGED_IDENTITY:-false}" == "true" ]]; then
 
   # Assign Key Vault Secrets User role if requested.
   if [[ "${ASSIGN_KV_ROLE:-true}" == "true" ]]; then
-    echo "\n==> Assigning 'Key Vault Secrets User' role on Key Vault to managed identity"
+    echo ""
+    echo "==> Assigning 'Key Vault Secrets User' role on Key Vault to managed identity"
     KEYVAULT_ID=$(az keyvault show \
       --name "$KEYVAULT_NAME" \
       --resource-group "$RESOURCE_GROUP" \
@@ -423,7 +389,8 @@ if [[ "${CREATE_MANAGED_IDENTITY:-false}" == "true" ]]; then
   fi
 
   # Assign AcrPull role on the ACR so container apps can pull images
-  echo "\n==> Assigning 'AcrPull' role on ACR to managed identity"
+  echo ""
+  echo "==> Assigning 'AcrPull' role on ACR to managed identity"
   az role assignment create \
     --role "AcrPull" \
     --assignee "$IDENTITY_PRINCIPAL_ID" \
@@ -431,31 +398,31 @@ if [[ "${CREATE_MANAGED_IDENTITY:-false}" == "true" ]]; then
     --only-show-errors || true
 fi
 
-echo "\nAll infrastructure resources have been created or updated successfully."
-echo "Summary:"
-printf "  Resource group:        %s\n" "$RESOURCE_GROUP"
-printf "  Region:                %s\n" "$LOCATION"
-printf "  Virtual network:       %s (%s)\n" "$VNET_NAME" "$VNET_ADDRESS_PREFIX"
-printf "  Infrastructure subnet: %s (%s)\n" "$INFRA_SUBNET_NAME" "$INFRA_SUBNET_PREFIX"
-printf "  Private endpoint subnet: %s (%s)\n" "$PE_SUBNET_NAME" "$PE_SUBNET_PREFIX"
-printf "  Container Env:         %s\n" "$ACA_ENVIRONMENT"
-printf "  Key vault:             %s\n" "$KEYVAULT_NAME"
-printf "  Storage account:       %s\n" "$STORAGE_ACCOUNT_NAME"
-printf "  ACR:                   %s\n" "$ACR_NAME"
-printf "  ACR login server:      %s\n" "$ACR_LOGIN_SERVER"
-if [[ "${CREATE_MANAGED_IDENTITY:-false}" == "true" ]]; then
-  printf "  Managed identity:      %s\n" "${USER_ASSIGNED_IDENTITY_NAME:-aca-uami}"
-fi
+# ----------------------------------------------------------------------------
+# Summary
 
-# Print useful identifiers for downstream scripts.
-echo "\nUse these values when deploying your apps:"
-echo "  ACA Environment name:       $ACA_ENVIRONMENT"
-echo "  ACA Environment resource group: $RESOURCE_GROUP"
-echo "  ACA Environment region:     $LOCATION"
-echo "  Key Vault URI:              https://$KEYVAULT_NAME.vault.azure.net/"
-echo "  Storage account:            $STORAGE_ACCOUNT_NAME"
-echo "  Private DNS zone:           $DNS_ZONE_NAME"
-echo "  ACR login server:           $ACR_LOGIN_SERVER"
+echo ""
+echo "============================================================"
+echo "Infrastructure provisioning complete!"
+echo "============================================================"
+echo ""
+echo "Resources created/verified:"
+printf "  Resource group:          %s\n" "$RESOURCE_GROUP"
+printf "  Region:                  %s\n" "$LOCATION"
+printf "  Virtual network:         %s (%s)\n" "$VNET_NAME" "$VNET_ADDRESS_PREFIX"
+printf "  Infrastructure subnet:   %s (%s)\n" "$INFRA_SUBNET_NAME" "$INFRA_SUBNET_PREFIX"
+printf "  Private endpoint subnet: %s (%s)\n" "$PE_SUBNET_NAME" "$PE_SUBNET_PREFIX"
+printf "  Container Env:           %s\n" "$ACA_ENVIRONMENT"
+printf "  Key vault:               %s\n" "$KEYVAULT_NAME"
+printf "  Storage account:         %s\n" "$STORAGE_ACCOUNT_NAME"
+printf "  ACR:                     %s\n" "$ACR_NAME"
+printf "  ACR login server:        %s\n" "$ACR_LOGIN_SERVER"
 if [[ "${CREATE_MANAGED_IDENTITY:-false}" == "true" ]]; then
-  echo "  User-assigned identity resource ID: $IDENTITY_RESOURCE_ID"
+  printf "  Managed identity:        %s\n" "${USER_ASSIGNED_IDENTITY_NAME:-aca-uami}"
 fi
+echo ""
+echo "Next steps:"
+echo "  1. Run ./deploy.sh to deploy container apps and configure HTTP routing"
+echo "  2. Access your apps via the routing FQDN printed by deploy.sh"
+echo ""
+echo "============================================================"

@@ -1,0 +1,12 @@
+# Worker service dependencies
+# Add your dependencies here
+
+# Example: Azure Storage Queue client
+# azure-storage-queue>=12.0.0
+
+# Example: Azure Service Bus client
+# azure-servicebus>=7.0.0
+
+# Example: Database clients
+# psycopg2-binary>=2.9.0
+# pymysql>=1.0.0

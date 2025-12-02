@@ -10,20 +10,21 @@ on:
 
 env:
   # These environment variables should be provided via GitHub secrets or
-  # repository variables.  See the runbook for instructions on how to
-  # configure them.  Do not hard-code sensitive values here.
+  # repository variables. See the runbook for instructions on how to
+  # configure them. Do not hard-code sensitive values here.
   SUBSCRIPTION_ID: ${{ secrets.AZ_SUBSCRIPTION_ID }}
   RESOURCE_GROUP:  ${{ secrets.ACAPP_RG }}
   LOCATION:        ${{ secrets.AZ_LOCATION }}
   TAG_ENVIRONMENT: ${{ secrets.TAG_ENVIRONMENT }}
   TAG_OWNER:       ${{ secrets.TAG_OWNER }}
   TAG_COST_CENTER: ${{ secrets.TAG_COST_CENTER }}
-  WORKSPACE_NAME:  ${{ secrets.WORKSPACE_NAME }}
   ACA_ENVIRONMENT: ${{ secrets.ACA_ENVIRONMENT }}
   VNET_NAME:       ${{ secrets.VNET_NAME }}
   VNET_ADDRESS_PREFIX: ${{ secrets.VNET_ADDRESS_PREFIX }}
   INFRA_SUBNET_NAME:   ${{ secrets.INFRA_SUBNET_NAME }}
   INFRA_SUBNET_PREFIX: ${{ secrets.INFRA_SUBNET_PREFIX }}
+  PE_SUBNET_NAME:      ${{ secrets.PE_SUBNET_NAME }}
+  PE_SUBNET_PREFIX:    ${{ secrets.PE_SUBNET_PREFIX }}
   KEYVAULT_NAME:   ${{ secrets.KEYVAULT_NAME }}
   STORAGE_ACCOUNT_NAME: ${{ secrets.STORAGE_ACCOUNT_NAME }}
   ACR_NAME:        ${{ secrets.ACR_NAME }}
@@ -47,8 +48,8 @@ jobs:
       - name: Prepare .env
         working-directory: infra
         run: |
-          # Assemble a .env file from environment variables.  This file will be
-          # consumed by create-resources.sh.  The values are pulled from the
+          # Assemble a .env file from environment variables. This file will be
+          # consumed by create-resources.sh. The values are pulled from the
           # workflow environment (populated via secrets).
           cat > .env <<EOF
           SUBSCRIPTION_ID=${{ env.SUBSCRIPTION_ID }}
@@ -57,13 +58,14 @@ jobs:
           TAG_ENVIRONMENT=${{ env.TAG_ENVIRONMENT }}
           TAG_OWNER=${{ env.TAG_OWNER }}
           TAG_COST_CENTER=${{ env.TAG_COST_CENTER }}
-          WORKSPACE_NAME=${{ env.WORKSPACE_NAME }}
           ACA_ENVIRONMENT=${{ env.ACA_ENVIRONMENT }}
-          INTERNAL_ONLY=true
+          INTERNAL_ONLY=false
           VNET_NAME=${{ env.VNET_NAME }}
           VNET_ADDRESS_PREFIX=${{ env.VNET_ADDRESS_PREFIX }}
           INFRA_SUBNET_NAME=${{ env.INFRA_SUBNET_NAME }}
           INFRA_SUBNET_PREFIX=${{ env.INFRA_SUBNET_PREFIX }}
+          PE_SUBNET_NAME=${{ env.PE_SUBNET_NAME }}
+          PE_SUBNET_PREFIX=${{ env.PE_SUBNET_PREFIX }}
           KEYVAULT_NAME=${{ env.KEYVAULT_NAME }}
           STORAGE_ACCOUNT_NAME=${{ env.STORAGE_ACCOUNT_NAME }}
           ACR_NAME=${{ env.ACR_NAME }}

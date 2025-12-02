@@ -1,0 +1,58 @@
+# Build and deploy container image
+#
+# Triggers on source code changes. Builds image, pushes to ACR, updates app.
+# Copy to your app repo and configure the variables.
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include: [src/**, Dockerfile, package*.json, requirements*.txt]
+    exclude: [containerapp.yml]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  azureSubscription: 'your-service-connection'  # Configure this
+  resourceGroup: 'your-resource-group'          # Configure this
+  acrName: 'youracrname'                        # Configure this
+  appName: 'web-hello'                          # Configure this
+
+steps:
+  - task: AzureCLI@2
+    displayName: Build and push image
+    inputs:
+      azureSubscription: $(azureSubscription)
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+
+        IMAGE_TAG=$(Build.BuildId)
+
+        az acr build \
+          --registry $(acrName) \
+          --image $(appName):$IMAGE_TAG \
+          --image $(appName):latest \
+          .
+
+        echo "##vso[task.setvariable variable=IMAGE_TAG]$IMAGE_TAG"
+
+  - task: AzureCLI@2
+    displayName: Update container app
+    inputs:
+      azureSubscription: $(azureSubscription)
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+
+        ACR_SERVER=$(az acr show -n $(acrName) --query loginServer -o tsv)
+
+        az containerapp update \
+          --name $(appName) \
+          --resource-group $(resourceGroup) \
+          --image $ACR_SERVER/$(appName):$(IMAGE_TAG)
+
+        echo "Deployed $(appName):$(IMAGE_TAG)"
