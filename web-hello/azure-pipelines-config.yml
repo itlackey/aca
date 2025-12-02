@@ -1,0 +1,56 @@
+# Azure DevOps pipeline: Apply configuration changes for web-hello
+#
+# This pipeline runs when the containerapp YAML or deployment script is
+# modified.  It creates a .env file from variables and runs the
+# deploy-containerapp.sh script to apply the new configuration.
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - aca/containerapp.yml
+      - scripts/deploy-containerapp.sh
+      - azure-pipelines-config.yml
+
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  azureSubscription: 'aca-apps-service-connection'
+  RESOURCE_GROUP:  'rg-aca-platform-demo'
+  ACA_ENVIRONMENT: 'aca-env-demo'
+  APP_NAME:        'web-hello-main'
+  SUBSCRIPTION_ID: '00000000-0000-0000-0000-000000000000'
+  IMAGE:           'acaregistrydemo1234.azurecr.io/web-hello-main:main'
+
+stages:
+  - stage: DeployConfig
+    displayName: Apply web-hello configuration
+    jobs:
+      - job: Deploy
+        displayName: Apply YAML and update configuration
+        steps:
+          - checkout: self
+            clean: true
+
+          - task: AzureCLI@2
+            displayName: Apply containerapp.yml via deploy script
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+
+                echo "SUBSCRIPTION_ID=$(SUBSCRIPTION_ID)" > .env
+                echo "RESOURCE_GROUP=$(RESOURCE_GROUP)" >> .env
+                echo "ACA_ENVIRONMENT=$(ACA_ENVIRONMENT)" >> .env
+                echo "APP_NAME=$(APP_NAME)" >> .env
+                echo "IMAGE=$(IMAGE)" >> .env
+
+                chmod +x scripts/deploy-containerapp.sh
+                ./scripts/deploy-containerapp.sh

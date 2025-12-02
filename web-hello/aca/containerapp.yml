@@ -1,0 +1,57 @@
+##
+# Template for the web-hello Container App.
+#
+# The deploy script will substitute the variables surrounded by double curly
+# braces.  Do not commit a version of this file with actual resource IDs or
+# secrets.  See scripts/deploy-containerapp.sh for details on how the file
+# is processed.
+
+name: {{APP_NAME}}
+type: Microsoft.App/containerApps
+properties:
+  # The fully qualified resource ID of the Container Apps environment.  This
+  # value is discovered by the deploy script.
+  environmentId: {{ENVIRONMENT_ID}}
+  configuration:
+    # Expose this app to the internet.  External ingress and SNI‑based
+    # certificates are only available on environments with an external IP.
+    ingress:
+      external: true
+      targetPort: 3000
+      allowInsecure: false
+      # If you need custom domains, certificates or IP restrictions, add
+      # configuration here.  See the Azure docs for more options.
+      traffic:
+        - latestRevision: true
+          weight: 100
+    # Secrets defined here can be referenced by containers via secretRef.
+    secrets:
+      - name: db-connection-string
+  template:
+    containers:
+      - name: web-hello
+        image: {{IMAGE}}
+        resources:
+          cpu: {{CPU}}
+          memory: {{MEMORY}}
+        env:
+          - name: ENVIRONMENT
+            value: {{APP_ENV}}
+          - name: DB_CONNECTION_STRING
+            secretRef: db-connection-string
+        probes:
+          - type: Liveness
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 30
+    scale:
+      minReplicas: {{MIN_REPLICAS}}
+      maxReplicas: {{MAX_REPLICAS}}
+      rules:
+        - name: http-scale
+          custom:
+            type: http
+            metadata:
+              concurrentRequests: "{{HTTP_CONCURRENCY}}"

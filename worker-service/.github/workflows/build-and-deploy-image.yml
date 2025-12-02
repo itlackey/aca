@@ -1,0 +1,59 @@
+name: build-and-deploy-image
+
+# Build, push and image-only deployment for the worker-service app.
+# Triggers on pushes to the main branch that modify the application
+# source code or Dockerfile.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "app/**"
+      - "Dockerfile"
+      - ".github/workflows/build-and-deploy-image.yml"
+  workflow_dispatch: {}
+
+env:
+  ACR_NAME:         ${{ secrets.ACR_NAME }}
+  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+  RESOURCE_GROUP:   ${{ secrets.ACAPP_RG }}
+  ACA_ENVIRONMENT:  ${{ secrets.ACAPP_ENV }}
+  APP_NAME:         worker-service-main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Log in to ACR
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Build and push image
+        run: |
+          IMAGE_TAG=${{ github.sha }}
+          IMAGE="$ACR_LOGIN_SERVER/${{ env.APP_NAME }}:$IMAGE_TAG"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Prepare .env
+        run: |
+          cat > .env <<EOF
+          SUBSCRIPTION_ID=${{ secrets.AZ_SUBSCRIPTION_ID }}
+          RESOURCE_GROUP=${{ env.RESOURCE_GROUP }}
+          ACA_ENVIRONMENT=${{ env.ACA_ENVIRONMENT }}
+          APP_NAME=${{ env.APP_NAME }}
+          IMAGE=${{ env.IMAGE }}
+          EOF
+
+      - name: Deploy image only
+        run: |
+          chmod +x scripts/deploy-image-only.sh
+          ./scripts/deploy-image-only.sh

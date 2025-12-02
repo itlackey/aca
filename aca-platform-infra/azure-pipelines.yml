@@ -1,0 +1,91 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - infra/*
+      - azure-pipelines.yml
+
+# This pipeline provisions or updates the shared ACA platform infrastructure.
+# It must run in a project that has a service connection with adequate
+# permissions (Contributor on the subscription).  Variable definitions are
+# generally managed via variable groups or library settings in Azure DevOps.
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  # Name of the Azure service connection to use for authentication
+  azureSubscription: 'aca-platform-service-connection'
+
+  # These variables should be defined in a variable group or pipeline
+  # variables section at runtime.  They mirror the `.env` contents.  See
+  # README and runbook for details.
+  SUBSCRIPTION_ID: '$(AZ_SUBSCRIPTION_ID)'
+  RESOURCE_GROUP:  '$(ACAPP_RG)'
+  LOCATION:        '$(AZ_LOCATION)'
+  TAG_ENVIRONMENT: '$(TAG_ENVIRONMENT)'
+  TAG_OWNER:       '$(TAG_OWNER)'
+  TAG_COST_CENTER: '$(TAG_COST_CENTER)'
+  WORKSPACE_NAME:  '$(WORKSPACE_NAME)'
+  ACA_ENVIRONMENT: '$(ACA_ENVIRONMENT)'
+  INTERNAL_ONLY:   '$(INTERNAL_ONLY)'
+  VNET_NAME:       '$(VNET_NAME)'
+  VNET_ADDRESS_PREFIX: '$(VNET_ADDRESS_PREFIX)'
+  INFRA_SUBNET_NAME:   '$(INFRA_SUBNET_NAME)'
+  INFRA_SUBNET_PREFIX: '$(INFRA_SUBNET_PREFIX)'
+  KEYVAULT_NAME:   '$(KEYVAULT_NAME)'
+  STORAGE_ACCOUNT_NAME: '$(STORAGE_ACCOUNT_NAME)'
+  ACR_NAME:        '$(ACR_NAME)'
+  ACR_SKU:         '$(ACR_SKU)'
+  CREATE_MANAGED_IDENTITY: '$(CREATE_MANAGED_IDENTITY)'
+  USER_ASSIGNED_IDENTITY_NAME: '$(USER_ASSIGNED_IDENTITY_NAME)'
+  ASSIGN_KV_ROLE:  '$(ASSIGN_KV_ROLE)'
+
+stages:
+  - stage: DeployInfra
+    displayName: Deploy ACA platform infrastructure
+    jobs:
+      - job: Deploy
+        displayName: Provision platform resources
+        steps:
+          - checkout: self
+            clean: true
+
+          - task: AzureCLI@2
+            displayName: Run create-resources.sh
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                
+                cd infra
+                
+                cat > .env <<EOF
+                SUBSCRIPTION_ID=$(SUBSCRIPTION_ID)
+                RESOURCE_GROUP=$(RESOURCE_GROUP)
+                LOCATION=$(LOCATION)
+                TAG_ENVIRONMENT=$(TAG_ENVIRONMENT)
+                TAG_OWNER=$(TAG_OWNER)
+                TAG_COST_CENTER=$(TAG_COST_CENTER)
+                WORKSPACE_NAME=$(WORKSPACE_NAME)
+                ACA_ENVIRONMENT=$(ACA_ENVIRONMENT)
+                INTERNAL_ONLY=$(INTERNAL_ONLY)
+                VNET_NAME=$(VNET_NAME)
+                VNET_ADDRESS_PREFIX=$(VNET_ADDRESS_PREFIX)
+                INFRA_SUBNET_NAME=$(INFRA_SUBNET_NAME)
+                INFRA_SUBNET_PREFIX=$(INFRA_SUBNET_PREFIX)
+                KEYVAULT_NAME=$(KEYVAULT_NAME)
+                STORAGE_ACCOUNT_NAME=$(STORAGE_ACCOUNT_NAME)
+                ACR_NAME=$(ACR_NAME)
+                ACR_SKU=$(ACR_SKU)
+                CREATE_MANAGED_IDENTITY=$(CREATE_MANAGED_IDENTITY)
+                USER_ASSIGNED_IDENTITY_NAME=$(USER_ASSIGNED_IDENTITY_NAME)
+                ASSIGN_KV_ROLE=$(ASSIGN_KV_ROLE)
+                EOF
+                
+                chmod +x create-resources.sh
+                ./create-resources.sh

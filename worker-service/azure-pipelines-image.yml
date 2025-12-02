@@ -1,0 +1,62 @@
+# Azure DevOps pipeline: Build, push and image-only deploy for worker-service
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - app/*
+      - Dockerfile
+      - azure-pipelines-image.yml
+
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  azureSubscription: 'aca-apps-service-connection'
+  ACR_NAME:          'acaregistrydemo1234'
+  ACR_LOGIN_SERVER:  'acaregistrydemo1234.azurecr.io'
+  RESOURCE_GROUP:    'rg-aca-platform-demo'
+  ACA_ENVIRONMENT:   'aca-env-demo'
+  APP_NAME:          'worker-service-main'
+  SUBSCRIPTION_ID:   '00000000-0000-0000-0000-000000000000'
+
+stages:
+  - stage: BuildAndDeploy
+    displayName: Build image and deploy update
+    jobs:
+      - job: Build
+        displayName: Build, push and image-only update
+        steps:
+          - checkout: self
+            clean: true
+
+          - task: AzureCLI@2
+            displayName: Build and deploy image
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+
+                az acr login --name "$(ACR_NAME)"
+
+                IMAGE_TAG=$(Build.SourceVersion)
+                IMAGE="$(ACR_LOGIN_SERVER)/$(APP_NAME):${IMAGE_TAG}"
+                echo "Building and pushing $IMAGE"
+
+                docker build -t "$IMAGE" .
+                docker push "$IMAGE"
+
+                echo "SUBSCRIPTION_ID=$(SUBSCRIPTION_ID)" > .env
+                echo "RESOURCE_GROUP=$(RESOURCE_GROUP)" >> .env
+                echo "ACA_ENVIRONMENT=$(ACA_ENVIRONMENT)" >> .env
+                echo "APP_NAME=$(APP_NAME)" >> .env
+                echo "IMAGE=$IMAGE" >> .env
+
+                chmod +x scripts/deploy-image-only.sh
+                ./scripts/deploy-image-only.sh

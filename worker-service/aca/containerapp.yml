@@ -1,0 +1,43 @@
+##
+# Template for the worker-service Container App.
+#
+# This YAML defines a non‑HTTP background service.  There is no ingress
+# configuration because the container doesn’t listen on a port.  The deploy
+# script substitutes the variables surrounded by double curly braces.
+
+name: {{APP_NAME}}
+type: Microsoft.App/containerApps
+properties:
+  # Container Apps environment resource ID
+  environmentId: {{ENVIRONMENT_ID}}
+  configuration:
+    # Declare a secret for the database connection string.  The value will
+    # be injected via the --secrets parameter in the deploy script.
+    secrets:
+      - name: db-connection-string
+  template:
+    containers:
+      - name: worker-service
+        image: {{IMAGE}}
+        resources:
+          cpu: {{CPU}}
+          memory: {{MEMORY}}
+        env:
+          - name: ENVIRONMENT
+            value: {{APP_ENV}}
+          - name: MESSAGE
+            value: {{MESSAGE}}
+          - name: INTERVAL_SECONDS
+            value: {{INTERVAL_SECONDS}}
+          - name: DB_CONNECTION_STRING
+            secretRef: db-connection-string
+    scale:
+      minReplicas: {{MIN_REPLICAS}}
+      maxReplicas: {{MAX_REPLICAS}}
+      rules:
+        - name: cpu-scale
+          custom:
+            type: cpu
+            metadata:
+              type: "Utilization"
+              value: "{{CPU_UTILIZATION}}"
