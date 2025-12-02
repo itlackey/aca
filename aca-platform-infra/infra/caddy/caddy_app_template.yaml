@@ -1,0 +1,71 @@
+# Template for the Caddy container app YAML definition.
+#
+# This YAML file is used by the deployment scripts to create the Caddy
+# reverse‑proxy container app using the Azure CLI.  It includes the
+# following components:
+#  - managedEnvironmentId: the resource ID of the Container Apps
+#    environment where the app will be deployed.
+#  - configuration.ingress: exposes port 80 with external ingress.
+#  - template.containers: defines the Caddy container, its image,
+#    environment variables for backend hostnames and resource limits,
+#    and the volume mount for the Caddy configuration.
+#  - template.volumes: declares the volume that maps to an Azure Files
+#    share defined at the environment level.  The name must match
+#    the storage definition created via `az containerapp env storage set`.
+#
+# Placeholders surrounded by double curly braces (e.g. {{ENV_ID}}) will
+# be replaced at runtime by the deployment script.
+
+location: {{LOCATION}}
+properties:
+  managedEnvironmentId: {{ENV_ID}}
+  configuration:
+    ingress:
+      external: true
+      targetPort: 80
+      # Allow HTTP (port 80) alongside HTTPS so Caddy can complete
+      # ACME HTTP‑01 challenges【794542619033064†L343-L346】.  Without this setting,
+      # Azure Container Apps automatically redirects HTTP traffic to HTTPS,
+      # which prevents certificate issuance.  See the ingress documentation
+      # for details on the allowInsecure property.
+      allowInsecure: true
+  template:
+    containers:
+      - name: {{CADDY_APP_NAME}}
+        image: caddy:2.7
+        env:
+          - name: APP1_HOST
+            value: {{APP1_FQDN}}
+          - name: APP2_HOST
+            value: {{APP2_FQDN}}
+          - name: APP1_DOMAIN
+            value: {{APP1_DOMAIN}}
+          - name: APP2_DOMAIN
+            value: {{APP2_DOMAIN}}
+          - name: LETS_ENCRYPT_EMAIL
+            value: {{LETS_ENCRYPT_EMAIL}}
+          # Persist Caddy certificate data by storing it under /data.  Caddy
+          # uses XDG_DATA_HOME to determine where to write its state, so
+          # this must match the mount point defined below.
+          - name: XDG_DATA_HOME
+            value: /data
+        resources:
+          cpu: 0.5
+          memory: 1.0Gi
+        volumeMounts:
+          - mountPath: /etc/caddy
+            volumeName: caddy-config
+          # Mount a second volume for Caddy's data directory.  This
+          # directory holds the certificates and ACME account information.
+          - mountPath: /data
+            volumeName: caddy-data
+    scale:
+      minReplicas: 1
+      maxReplicas: 3
+    volumes:
+      - name: caddy-config
+        storageType: AzureFile
+        storageName: {{STORAGE_NAME}}
+      - name: caddy-data
+        storageType: AzureFile
+        storageName: {{STORAGE_NAME}}
