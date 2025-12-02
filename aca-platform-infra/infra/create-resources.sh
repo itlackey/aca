@@ -7,8 +7,7 @@
 # The script creates or updates the following resources:
 #   • Resource group
 #   • Virtual network and delegated subnet for the ACA environment
-#   • Log Analytics workspace for diagnostics
-#   • Azure Storage account (general purpose v2) used for ACA diagnostics
+#   • Azure Storage account (general purpose v2) used for ACA diagnostics via Azure Monitor
 #   • Azure Container Apps environment integrated with the delegated subnet
 #   • Azure Key Vault with RBAC enabled
 #   • Azure Container Registry (ACR) for storing container images
@@ -40,7 +39,6 @@ fi
 required_vars=(
   RESOURCE_GROUP
   LOCATION
-  WORKSPACE_NAME
   ACA_ENVIRONMENT
   VNET_NAME
   VNET_ADDRESS_PREFIX
@@ -111,23 +109,7 @@ INFRA_SUBNET_ID=$(az network vnet subnet show \
   --name "$INFRA_SUBNET_NAME" \
   --query id -o tsv)
 
-echo "\n==> Creating Log Analytics workspace '$WORKSPACE_NAME'"
-az monitor log-analytics workspace create \
-  --resource-group "$RESOURCE_GROUP" \
-  --workspace-name "$WORKSPACE_NAME" \
-  --location "$LOCATION" \
-  "${TAGS_ARGS[@]}" \
-  --output none
-
-# Retrieve workspace identifiers used when creating the Container Apps environment.
-WORKSPACE_ID=$(az monitor log-analytics workspace show \
-  --resource-group "$RESOURCE_GROUP" \
-  --workspace-name "$WORKSPACE_NAME" \
-  --query customerId -o tsv)
-WORKSPACE_KEY=$(az monitor log-analytics workspace get-shared-keys \
-  --resource-group "$RESOURCE_GROUP" \
-  --workspace-name "$WORKSPACE_NAME" \
-  --query primarySharedKey -o tsv)
+# Skipping Log Analytics workspace creation; using Azure Monitor with Storage
 
 echo "\n==> Creating storage account '$STORAGE_ACCOUNT_NAME'"
 az storage account create \
@@ -140,6 +122,51 @@ az storage account create \
   "${TAGS_ARGS[@]}" \
   --output none
 
+# Optionally configure lifecycle management to control costs.
+# Set LIFECYCLE_ENABLE=true to enable. Configure policies via env vars:
+#   LIFECYCLE_MOVE_TO_COOL_AFTER_DAYS (default 30)
+#   LIFECYCLE_DELETE_AFTER_DAYS (default 180)
+if [[ "${LIFECYCLE_ENABLE:-false}" == "true" ]]; then
+  MOVE_TO_COOL=${LIFECYCLE_MOVE_TO_COOL_AFTER_DAYS:-30}
+  DELETE_AFTER=${LIFECYCLE_DELETE_AFTER_DAYS:-180}
+  echo "\n==> Applying storage lifecycle policy (Cool after ${MOVE_TO_COOL} days, delete after ${DELETE_AFTER} days)"
+  # Build a basic lifecycle management policy for blobs in the 'insights-logs' and 'insights-metrics' containers
+  read -r -d '' POLICY_JSON <<EOF
+{
+  "rules": [
+    {
+      "name": "LogsToCoolAndDelete",
+      "enabled": true,
+      "type": "Lifecycle",
+      "definition": {
+        "filters": {
+          "blobTypes": ["blockBlob"],
+          "prefixMatch": [
+            "insights-logs/",
+            "insights-metrics/"
+          ]
+        },
+        "actions": {
+          "baseBlob": {
+            "tierToCool": { "daysAfterModificationGreaterThan": ${MOVE_TO_COOL} },
+            "delete": { "daysAfterModificationGreaterThan": ${DELETE_AFTER} }
+          },
+          "snapshot": {
+            "delete": { "daysAfterCreationGreaterThan": ${DELETE_AFTER} }
+          }
+        }
+      }
+    }
+  ]
+}
+EOF
+  az storage account management-policy create \
+    --account-name "$STORAGE_ACCOUNT_NAME" \
+    --resource-group "$RESOURCE_GROUP" \
+    --policy "$POLICY_JSON" \
+    --only-show-errors
+fi
+
 echo "\n==> Creating Container Apps environment '$ACA_ENVIRONMENT'"
 # Build the argument list for environment creation.  We always pass
 # the storage account so that diagnostic logs can be routed there.
@@ -148,8 +175,8 @@ env_args=(
   --resource-group "$RESOURCE_GROUP"
   --location "$LOCATION"
   --infrastructure-subnet-resource-id "$INFRA_SUBNET_ID"
-  --logs-workspace-id "$WORKSPACE_ID"
-  --logs-workspace-key "$WORKSPACE_KEY"
+  --logs-destination azure-monitor
+  --storage-account "$STORAGE_ACCOUNT_NAME"
   "${TAGS_ARGS[@]}"
 )
 
@@ -241,7 +268,6 @@ printf "  Region:                %s\n" "$LOCATION"
 printf "  Virtual network:       %s (%s)\n" "$VNET_NAME" "$VNET_ADDRESS_PREFIX"
 printf "  Subnet:                %s (%s)\n" "$INFRA_SUBNET_NAME" "$INFRA_SUBNET_PREFIX"
 printf "  Container Env:         %s\n" "$ACA_ENVIRONMENT"
-printf "  Log workspace:         %s\n" "$WORKSPACE_NAME"
 printf "  Key vault:             %s\n" "$KEYVAULT_NAME"
 printf "  Storage account:       %s\n" "$STORAGE_ACCOUNT_NAME"
 printf "  ACR:                   %s\n" "$ACR_NAME"
