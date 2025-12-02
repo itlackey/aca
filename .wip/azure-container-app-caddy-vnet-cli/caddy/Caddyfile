@@ -1,0 +1,32 @@
+{
+    # Disable automatic HTTPS.  Caddy typically enables HTTPS by default and
+    # attempts to obtain certificates via ACME.  Because this configuration
+    # terminates traffic inside Azure Container Apps and uses the internal
+    # domain names of backend services, we explicitly disable automatic HTTPS.
+    auto_https off
+    servers :80 {
+        protocols h1
+    }
+}
+
+# Caddy listens on port 80 and proxies requests to backend container apps
+# according to the URL prefix.  The backend FQDNs are injected as
+# environment variables by the deployment script using the `APP1_HOST` and
+# `APP2_HOST` variables.
+:
+80 {
+    log
+
+    # Proxy requests starting with /app1/ to the first backend.
+    handle_path /app1/* {
+        reverse_proxy {$APP1_HOST}
+    }
+
+    # Proxy requests starting with /app2/ to the second backend.
+    handle_path /app2/* {
+        reverse_proxy {$APP2_HOST}
+    }
+
+    # For any other request, return a simple landing page.
+    respond "Welcome to the Caddy reverse proxy!\nUse /app1 or /app2 to reach the backend services." 200
+}

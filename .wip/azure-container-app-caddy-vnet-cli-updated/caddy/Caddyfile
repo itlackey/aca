@@ -1,0 +1,38 @@
+{
+    # Global Caddy configuration.
+    # The email address is used for ACME registration when obtaining
+    # certificates from Let's Encrypt.  This value is injected via an
+    # environment variable by the deployment script.  If you do not set
+    # LETS_ENCRYPT_EMAIL, Caddy will fall back to the default no‑email mode.
+    # See https://caddyserver.com/docs/caddyfile/options for details.
+    email {$LETS_ENCRYPT_EMAIL}
+}
+
+#
+# Caddy site configuration
+#
+# This block enables automatic HTTPS for your public domain and proxies
+# requests to the internal container apps based on the URL path.  Caddy
+# will use the Let's Encrypt ACME protocol to obtain and renew a
+# certificate for the domain defined by the PUBLIC_DOMAIN environment
+# variable.  For ACME to succeed, the DNS name must resolve to the
+# Container Apps environment's public FQDN and HTTP traffic must be
+# allowed (handled by the `allowInsecure` ingress setting in the YAML
+# template).
+
+{$PUBLIC_DOMAIN} {
+    log
+
+    # Forward requests prefixed with /app1/ to the first backend
+    handle_path /app1/* {
+        reverse_proxy {$APP1_HOST}
+    }
+
+    # Forward requests prefixed with /app2/ to the second backend
+    handle_path /app2/* {
+        reverse_proxy {$APP2_HOST}
+    }
+
+    # Default response for unmatched paths
+    respond "Welcome to the Caddy reverse proxy!\nUse /app1 or /app2 to reach the backend services." 200
+}
