@@ -2,58 +2,60 @@
 
 Provisions shared infrastructure for Azure Container Apps. Apps deploy themselves.
 
-## What this repo does
+## App Templates
 
-**Infra repo (this)** creates shared resources:
-- Resource group, VNet, subnets
-- Container Apps environment
-- Azure Container Registry (ACR)
-- Key Vault
-- Managed identity (for ACR pull + Key Vault access)
-
-**App repos** manage their own:
-- `containerapp.yml` - app configuration
-- `Dockerfile` - container image
-- CI/CD pipelines
+| Template | Ingress | Use Case |
+|----------|---------|----------|
+| `public-app` | External (internet) | Public websites, external APIs, webhooks |
+| `private-app` | Internal (VNet only) | Intranet apps, internal APIs, backend services |
+| `worker-service` | None | Background jobs, queue processors, scheduled tasks |
 
 ## Quick Start
 
-### 1. Configure
+### 1. Deploy infrastructure
 
 ```bash
 cd infra
 cp .env.example .env
-$EDITOR .env  # Set globally unique names for storage, keyvault, acr
-```
+$EDITOR .env  # Set globally unique names
 
-### 2. Deploy infrastructure
-
-```bash
 az login
-./create-resources.sh           # uses .env
-./create-resources.sh .env.dev  # or specify env file
+./create-resources.sh
 ```
 
-Save the output - you'll need the resource IDs for your app's `containerapp.yml`.
-
-### 3. Create an app
-
-Copy a template to a new repo:
+### 2. Deploy an app
 
 ```bash
-cp -r templates/web-hello ~/my-app
+# Copy template
+cp -r templates/public-app ~/my-app
 cd ~/my-app
+
+# Edit containerapp.yml with your resource IDs
+$EDITOR containerapp.yml
+
+# Build and deploy
+az acr build --registry <acr> --image my-app:v1 .
+az containerapp create -g <rg> --yaml containerapp.yml
 ```
 
-Edit `containerapp.yml` with your resource IDs (from step 2), then:
+## Public vs Private Apps
 
-```bash
-# Build and push image
-az acr build --registry <acr-name> --image my-app:v1 .
+The key difference is `ingress.external` in `containerapp.yml`:
 
-# Deploy
-az containerapp create -g <resource-group> --yaml containerapp.yml
+```yaml
+# PUBLIC - internet accessible
+ingress:
+  external: true   # Gets public FQDN: https://app.<id>.<region>.azurecontainerapps.io
+
+# PRIVATE - VNet only
+ingress:
+  external: false  # Internal FQDN: http://app.internal.<id>.<region>.azurecontainerapps.io
 ```
+
+**Private app access:**
+- From within VNet: use internal FQDN directly
+- From on-prem (VPN/ExpressRoute): configure DNS to point to environment's static IP
+- Get static IP: `az containerapp env show -n <env> -g <rg> --query properties.staticIp`
 
 ## Repository Structure
 
@@ -65,72 +67,32 @@ aca-platform-infra/
 │   ├── setup-domain.sh       # Custom domain helper
 │   └── .env.example
 ├── templates/
-│   ├── web-hello/            # Web app with ingress
-│   │   ├── containerapp.yml  # Copy and fill in your values
-│   │   ├── Dockerfile
-│   │   └── src/
-│   ├── worker-service/       # Background worker (no ingress)
-│   │   ├── containerapp.yml
-│   │   ├── Dockerfile
-│   │   └── src/
-│   └── pipelines/            # CI/CD templates
-│       ├── azure-pipelines-image.yml   # Build + push image
-│       └── azure-pipelines-config.yml  # Deploy config changes
+│   ├── public-app/           # Internet accessible
+│   ├── private-app/          # VNet only (10.x IP)
+│   ├── worker-service/       # No HTTP (background jobs)
+│   └── pipelines/
 └── RUNBOOK.md
 ```
 
-## App Deployment Flow
-
-```
-┌─────────────────┐     ┌─────────────────┐
-│   Infra Repo    │     │    App Repo     │
-├─────────────────┤     ├─────────────────┤
-│ create-resources│────▶│ containerapp.yml│ (fill in resource IDs)
-│ .sh             │     │ Dockerfile      │
-│                 │     │ src/            │
-│                 │     │ azure-pipelines │
-└─────────────────┘     └────────┬────────┘
-                                 │
-                                 ▼
-                        ┌─────────────────┐
-                        │  az containerapp│
-                        │  create --yaml  │
-                        └─────────────────┘
-```
-
-**Code changes** → `az containerapp update --image`
-**Config changes** → `az containerapp update --yaml`
-
 ## CI/CD
 
-Each app repo has two pipelines:
+Copy pipeline templates to your app repo:
 
-| Pipeline | Triggers on | Does |
-|----------|-------------|------|
-| `azure-pipelines-image.yml` | `src/`, `Dockerfile` | Build image, update app |
-| `azure-pipelines-config.yml` | `containerapp.yml` | Deploy full config |
+| Pipeline | Triggers | Action |
+|----------|----------|--------|
+| `azure-pipelines-image.yml` | Code changes | Build image, update app |
+| `azure-pipelines-config.yml` | YAML changes | Deploy full config |
 
-## Custom Domains
-
-Use the helper script:
+## Custom Domains (public apps only)
 
 ```bash
-# Step 1: Add domain and get DNS requirements
 ./infra/setup-domain.sh <app> <rg> <env> app.example.com
-
-# Output shows:
-#   CNAME: app -> <app-fqdn>
-#   TXT:   asuid.app -> <verification-id>
-
-# Step 2: Configure DNS records (manual step)
-
-# Step 3: Bind certificate (after DNS propagates)
+# Configure DNS as shown, then:
 ./infra/setup-domain.sh <app> <rg> <env> app.example.com --bind-cert
 ```
 
 ## Cleanup
 
 ```bash
-cd infra
-./destroy-resources.sh
+./infra/destroy-resources.sh
 ```

@@ -1,0 +1,49 @@
+# PRIVATE APP - VNet only (10.x internal IP)
+#
+# Internal ingress = only accessible within VNet or via VNet peering
+# Use for: intranet apps, internal APIs, backend services
+#
+# Access via: http://private-app.internal.<env-unique-id>.<region>.azurecontainerapps.io
+# Or configure on-prem DNS to point to the environment's static internal IP.
+#
+# Deploy: az containerapp create -g <rg> --yaml containerapp.yml
+# Update: az containerapp update -n private-app -g <rg> --yaml containerapp.yml
+
+type: Microsoft.App/containerApps
+name: private-app
+location: eastus  # Change to your region
+identity:
+  type: UserAssigned
+  userAssignedIdentities:
+    # az identity show -n <identity> -g <rg> --query id -o tsv
+    /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identity>: {}
+properties:
+  managedEnvironmentId: /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.App/managedEnvironments/<env>
+  configuration:
+    activeRevisionsMode: Single
+    registries:
+      - server: <acr>.azurecr.io
+        identity: /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identity>
+    ingress:
+      external: false  # <-- PRIVATE: VNet only, no public IP
+      targetPort: 3000
+      transport: auto
+      allowInsecure: false
+  template:
+    containers:
+      - name: private-app
+        image: <acr>.azurecr.io/private-app:latest
+        resources:
+          cpu: 0.25
+          memory: 0.5Gi
+        env:
+          - name: PORT
+            value: "3000"
+    scale:
+      minReplicas: 1
+      maxReplicas: 5
+      rules:
+        - name: http-scaling
+          http:
+            metadata:
+              concurrentRequests: "50"

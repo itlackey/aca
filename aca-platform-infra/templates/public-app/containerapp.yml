@@ -1,0 +1,46 @@
+# PUBLIC APP - Internet accessible
+#
+# External ingress = public FQDN with automatic HTTPS
+# Use for: public websites, APIs, webhooks
+#
+# Deploy: az containerapp create -g <rg> --yaml containerapp.yml
+# Update: az containerapp update -n public-app -g <rg> --yaml containerapp.yml
+
+type: Microsoft.App/containerApps
+name: public-app
+location: eastus  # Change to your region
+identity:
+  type: UserAssigned
+  userAssignedIdentities:
+    # az identity show -n <identity> -g <rg> --query id -o tsv
+    /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identity>: {}
+properties:
+  managedEnvironmentId: /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.App/managedEnvironments/<env>
+  configuration:
+    activeRevisionsMode: Single
+    registries:
+      - server: <acr>.azurecr.io
+        identity: /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<identity>
+    ingress:
+      external: true  # <-- PUBLIC: accessible from internet
+      targetPort: 3000
+      transport: auto
+      allowInsecure: false
+  template:
+    containers:
+      - name: public-app
+        image: <acr>.azurecr.io/public-app:latest
+        resources:
+          cpu: 0.25
+          memory: 0.5Gi
+        env:
+          - name: PORT
+            value: "3000"
+    scale:
+      minReplicas: 1
+      maxReplicas: 5
+      rules:
+        - name: http-scaling
+          http:
+            metadata:
+              concurrentRequests: "50"

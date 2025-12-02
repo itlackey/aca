@@ -9,7 +9,6 @@
 | Update image | `az containerapp update -n <app> -g <rg> --image <image>` |
 | Update config | `az containerapp update -n <app> -g <rg> --yaml containerapp.yml` |
 | Add domain | `./infra/setup-domain.sh <app> <rg> <env> <domain>` |
-| Bind cert | `./infra/setup-domain.sh <app> <rg> <env> <domain> --bind-cert` |
 | View logs | `az containerapp logs show -n <app> -g <rg> --follow` |
 
 ## Step 1: Deploy Infrastructure
@@ -17,102 +16,100 @@
 ```bash
 cd aca-platform-infra/infra
 cp .env.example .env
-$EDITOR .env  # Set unique names for: STORAGE_ACCOUNT_NAME, KEYVAULT_NAME, ACR_NAME
+$EDITOR .env  # Set unique names
 
 az login
-./create-resources.sh           # uses .env
-./create-resources.sh .env.dev  # or specify env file
+./create-resources.sh
 ```
 
-**Save the output** - copy these values for app configuration:
-- `ACR login server` (e.g., `myacr.azurecr.io`)
-- `ACA environment ID` (e.g., `/subscriptions/.../managedEnvironments/aca-env`)
-- `Managed identity ID` (e.g., `/subscriptions/.../userAssignedIdentities/aca-uami`)
+**Save the output** - you'll need:
 
-## Step 2: Create Your First App
+- ACR login server (e.g., `myacr.azurecr.io`)
+- ACA environment ID
+- Managed identity ID
+
+## Step 2: Choose a Template
+
+| Template | Use Case |
+|----------|----------|
+| `public-app` | Internet-facing websites, APIs |
+| `private-app` | Intranet apps, internal services (VNet only) |
+| `worker-service` | Background jobs, no HTTP |
+
+## Step 3: Deploy Public App
 
 ```bash
-# Copy template
-cp -r templates/web-hello ~/web-hello
-cd ~/web-hello
+cp -r templates/public-app ~/my-public-app
+cd ~/my-public-app
 
-# Edit containerapp.yml - replace placeholders with your values:
-# - <sub-id> → your subscription ID
-# - <rg> → your resource group
-# - <acr-name> → your ACR name
-# - <env-name> → your ACA environment name
-# - <identity-name> → your managed identity name
+# Edit containerapp.yml with your resource IDs
 $EDITOR containerapp.yml
+
+# Build and deploy
+az acr build --registry <acr> --image public-app:v1 .
+az containerapp create -g <rg> --yaml containerapp.yml
+
+# Get public URL
+az containerapp show -n public-app -g <rg> --query properties.configuration.ingress.fqdn -o tsv
 ```
 
-## Step 3: Build and Deploy
+## Step 4: Deploy Private App
 
 ```bash
-# Build image
-az acr build --registry <acr-name> --image web-hello:v1 .
+cp -r templates/private-app ~/my-internal-app
+cd ~/my-internal-app
 
-# Deploy
+$EDITOR containerapp.yml
+
+az acr build --registry <acr> --image private-app:v1 .
 az containerapp create -g <rg> --yaml containerapp.yml
 ```
 
-## Step 4: Verify
+**Access private app:**
 
 ```bash
-# Get URL
-az containerapp show -n web-hello -g <rg> --query properties.configuration.ingress.fqdn -o tsv
+# Get internal FQDN
+az containerapp show -n private-app -g <rg> --query properties.configuration.ingress.fqdn -o tsv
+# Returns: private-app.internal.<id>.<region>.azurecontainerapps.io
 
-# View logs
-az containerapp logs show -n web-hello -g <rg> --follow
+# Get environment's static IP (for on-prem DNS)
+az containerapp env show -n <env> -g <rg> --query properties.staticIp -o tsv
 ```
 
-## Updating Apps
+## Step 5: Deploy Worker
 
-**Code change** (new image):
 ```bash
-az acr build --registry <acr> --image web-hello:v2 .
-az containerapp update -n web-hello -g <rg> --image <acr>.azurecr.io/web-hello:v2
-```
+cp -r templates/worker-service ~/my-worker
+cd ~/my-worker
 
-**Config change** (scaling, env vars, secrets):
-```bash
 $EDITOR containerapp.yml
-az containerapp update -n web-hello -g <rg> --yaml containerapp.yml
+
+az acr build --registry <acr> --image worker-service:v1 .
+az containerapp create -g <rg> --yaml containerapp.yml
+
+# View logs (no URL - it's a background worker)
+az containerapp logs show -n worker-service -g <rg> --follow
 ```
 
-## CI/CD Setup
-
-Copy pipeline templates to your app repo:
-```bash
-cp templates/pipelines/azure-pipelines-image.yml ~/web-hello/
-cp templates/pipelines/azure-pipelines-config.yml ~/web-hello/
-```
-
-Edit variables in each pipeline file, then push to trigger deployments.
-
-## Custom Domains
+## Custom Domains (public apps only)
 
 ```bash
-# Add domain and see DNS requirements
-cd aca-platform-infra
-./infra/setup-domain.sh web-hello <rg> <env> app.example.com
-
-# Configure DNS (CNAME + TXT records shown in output)
-
-# Bind certificate after DNS propagates
-./infra/setup-domain.sh web-hello <rg> <env> app.example.com --bind-cert
+./infra/setup-domain.sh public-app <rg> <env> app.example.com
+# Configure DNS as shown
+./infra/setup-domain.sh public-app <rg> <env> app.example.com --bind-cert
 ```
 
 ## Key Vault Secrets
 
 ```bash
 # Create secret
-az keyvault secret set --vault-name <kv> --name db-password --value "secret123"
+az keyvault secret set --vault-name <kv> --name db-password --value "secret"
 
-# Reference in containerapp.yml:
-#   secrets:
+# Add to containerapp.yml:
+#   configuration.secrets:
 #     - name: db-password
 #       keyVaultUrl: https://<kv>.vault.azure.net/secrets/db-password
-#       identity: <identity-resource-id>
+#       identity: <identity-id>
 #   template.containers[].env:
 #     - name: DB_PASSWORD
 #       secretRef: db-password
@@ -121,8 +118,5 @@ az keyvault secret set --vault-name <kv> --name db-password --value "secret123"
 ## Cleanup
 
 ```bash
-cd aca-platform-infra/infra
-./destroy-resources.sh           # uses .env
-./destroy-resources.sh .env.dev  # or specify env file
+./infra/destroy-resources.sh
 ```
-

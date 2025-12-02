@@ -45,7 +45,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`web-hello server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
   console.log(`Ready check:  http://localhost:${PORT}/ready`);
 });
